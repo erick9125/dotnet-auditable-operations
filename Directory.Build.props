@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Authors>erick9125</Authors>
+    <Copyright>Copyright (c) erick9125</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/erick9125/dotnet-auditable-operations</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/erick9125/dotnet-auditable-operations</PackageProjectUrl>
+  </PropertyGroup>
+</Project>
