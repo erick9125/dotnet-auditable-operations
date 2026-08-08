@@ -25,14 +25,35 @@ public sealed class DatabaseAuditSink : IAuditSink
         }
 
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var dbContext = Stage(scope.ServiceProvider, records);
+
+        await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public void Write(IReadOnlyCollection<AuditRecord> records)
+    {
+        if (records.Count == 0)
+        {
+            return;
+        }
+
+        // A real synchronous path: the default interface implementation would block a thread pool
+        // thread on database I/O for every synchronous SaveChanges.
+        using var scope = _scopeFactory.CreateScope();
+        Stage(scope.ServiceProvider, records).SaveChanges();
+    }
+
+    private static AuditDbContext Stage(IServiceProvider services, IReadOnlyCollection<AuditRecord> records)
+    {
+        var dbContext = services.GetRequiredService<AuditDbContext>();
 
         foreach (var record in records)
         {
             dbContext.AuditEntries.Add(AuditEntryEntity.FromRecord(record));
         }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        return dbContext;
     }
 }
 

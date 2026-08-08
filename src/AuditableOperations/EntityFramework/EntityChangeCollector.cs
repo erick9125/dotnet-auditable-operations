@@ -119,7 +119,10 @@ public sealed class EntityChangeCollector
         {
             Entry = entry,
             Action = action.Value,
-            EntityType = entry.Metadata.ClrType.Name,
+
+            // Fully qualified: two entities with the same short name in different namespaces would
+            // otherwise be indistinguishable in the trail.
+            EntityType = entry.Metadata.ClrType.FullName ?? entry.Metadata.ClrType.Name,
             Changes = changes
         };
     }

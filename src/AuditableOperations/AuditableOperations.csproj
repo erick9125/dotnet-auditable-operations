@@ -15,10 +15,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-
-  <ItemGroup>
+    <!--
+      Deliberately a package reference and not FrameworkReference to Microsoft.AspNetCore.App:
+      the HTTP context accessor is one optional file, and requiring the ASP.NET Core shared
+      framework would force every consumer - workers, console hosts, daemons - to be a web app.
+    -->
+    <PackageReference Include="Microsoft.AspNetCore.Http" Version="2.3.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.8" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.8" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.8" />

@@ -34,7 +34,7 @@ public sealed class EntityChangeTests
         harness.Sink.Records.Should().ContainSingle();
         var record = harness.Sink.Records.Single();
         record.Action.Should().Be(nameof(AuditAction.Created));
-        record.EntityType.Should().Be(nameof(WorkOrder));
+        record.EntityType.Should().Be(typeof(WorkOrder).FullName);
         record.EntityId.Should().Be(entity.Id.ToString());
         record.Changes.Should().NotContain(x => x.Property == nameof(WorkOrder.CacheUpdatedAt));
         record.Changes.Should().Contain(x => x.Property == nameof(WorkOrder.Status) && Equals(x.CurrentValue, "Pending"));
@@ -250,7 +250,8 @@ internal sealed class TestHarness : IAsyncDisposable
 
     public static async Task<TestHarness> CreateAsync(
         Action<IServiceCollection>? configure = null,
-        InMemoryAuditSink? sharedSink = null)
+        InMemoryAuditSink? sharedSink = null,
+        bool registerDefaultSink = true)
     {
         var connection = new SqliteConnection("DataSource=:memory:");
         await connection.OpenAsync();
@@ -260,7 +261,12 @@ internal sealed class TestHarness : IAsyncDisposable
         services.AddAuditableOperations();
         services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
-        if (sharedSink is null)
+        if (!registerDefaultSink)
+        {
+            // Concrete type only, so Sink still resolves while IAuditSink falls back to NullAuditSink.
+            services.AddSingleton<InMemoryAuditSink>();
+        }
+        else if (sharedSink is null)
         {
             services.AddInMemoryAuditSink();
         }
@@ -276,7 +282,7 @@ internal sealed class TestHarness : IAsyncDisposable
         {
             options
                 .UseSqlite(connection)
-                .AddInterceptors(sp.GetRequiredService<AuditSaveChangesInterceptor>());
+                .UseAuditableOperations(sp);
         });
 
         var provider = services.BuildServiceProvider();
@@ -313,6 +319,8 @@ internal sealed class TestDbContext : DbContext
 
     public DbSet<LongKeyed> LongKeyed => Set<LongKeyed>();
 
+    public DbSet<Ticket> Tickets => Set<Ticket>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Invoice>().OwnsOne(x => x.Address);
@@ -336,6 +344,15 @@ internal sealed class BillingAddress
 
     [AuditRedact]
     public string Street { get; set; } = string.Empty;
+}
+
+/// <summary>Entity with a database-generated identity key, not a client-generated GUID.</summary>
+[Audited]
+internal sealed class Ticket
+{
+    public int Id { get; set; }
+
+    public string Subject { get; set; } = string.Empty;
 }
 
 [Audited]

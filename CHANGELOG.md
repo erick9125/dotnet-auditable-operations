@@ -11,6 +11,17 @@
 - `SinkFailureBehavior` (default `LogAndContinue`) controls whether a post-commit sink failure breaks
   the business operation
 - Finalize database-generated entity IDs after `SaveChanges`
+- Depend on the `Microsoft.AspNetCore.Http` package instead of the ASP.NET Core shared framework, so
+  workers and console hosts can consume the library
+- Report `EntityType` as the full CLR type name, so same-named types in different namespaces stay
+  distinguishable
+- `IAuditSink.Write` gives synchronous `SaveChanges` a real sync path instead of blocking on the
+  async one; `InMemoryAuditSink` and `DatabaseAuditSink` implement it
+- Register `NullAuditSink` by default, warning once instead of failing with an opaque DI error when
+  no sink was registered
+- Add `UseAuditableOperations(sp)` for `DbContextOptionsBuilder`
+- Index `audit_entries` on `(EntityType, EntityId, OccurredAt)` and let the provider choose the JSON
+  column type, so the schema is portable beyond PostgreSQL
 - Enrich records with user, tenant, correlation ID, and source through `IAuditContextAccessor`
 - Provide `HttpAuditContextAccessor` and null/custom accessors
 - Support `[Audited]`, `[AuditRedact]`, and `[AuditIgnore]`
