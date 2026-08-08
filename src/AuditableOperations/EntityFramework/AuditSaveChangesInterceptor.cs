@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using AuditableOperations.Abstractions;
+using AuditableOperations.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -66,9 +68,19 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         SaveChangesCompletedEventData eventData,
         int result)
     {
-        PersistPending(eventData.Context, CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
+        var context = eventData.Context;
+        if (TakePendingRecords(context, out var records))
+        {
+            try
+            {
+                _sink.Write(records);
+            }
+            catch (Exception ex)
+            {
+                HandleSinkFailure(ex, context!, records.Count);
+            }
+        }
+
         return result;
     }
 
@@ -77,7 +89,19 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         int result,
         CancellationToken cancellationToken = default)
     {
-        await PersistPending(eventData.Context, cancellationToken);
+        var context = eventData.Context;
+        if (TakePendingRecords(context, out var records))
+        {
+            try
+            {
+                await _sink.WriteAsync(records, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                HandleSinkFailure(ex, context!, records.Count);
+            }
+        }
+
         return result;
     }
 
@@ -111,39 +135,40 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         _pending[context.ContextId] = captures;
     }
 
-    private async Task PersistPending(DbContext? context, CancellationToken cancellationToken)
+    /// <summary>
+    /// Removes the captures held for <paramref name="context"/> and turns them into records with
+    /// database-generated keys resolved. Returns <see langword="false"/> when there is nothing to write.
+    /// </summary>
+    private bool TakePendingRecords(DbContext? context, out IReadOnlyList<AuditRecord> records)
     {
-        if (context is null)
+        records = Array.Empty<AuditRecord>();
+
+        if (context is null
+            || !_pending.TryRemove(context.ContextId, out var captures)
+            || captures.Count == 0)
         {
-            return;
+            return false;
         }
 
-        if (!_pending.TryRemove(context.ContextId, out var captures) || captures.Count == 0)
-        {
-            return;
-        }
+        records = _collector.BuildRecords(captures, _contextAccessor.GetCurrent(), DateTimeOffset.UtcNow);
+        return records.Count > 0;
+    }
 
-        var auditContext = _contextAccessor.GetCurrent();
-        var records = _collector.BuildRecords(captures, auditContext, DateTimeOffset.UtcNow);
+    private void HandleSinkFailure(Exception exception, DbContext context, int recordCount)
+    {
+        // The business transaction already committed, so rethrowing cannot undo it — it only
+        // reports a failure for an operation that succeeded, inviting a duplicating retry.
+        _logger.LogError(
+            exception,
+            "Failed to persist {Count} audit records for context {ContextId}. Audit trail is incomplete.",
+            recordCount,
+            context.ContextId);
 
-        try
+        if (_options.SinkFailureBehavior == SinkFailureBehavior.Throw)
         {
-            await _sink.WriteAsync(records, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            // The business transaction already committed, so rethrowing cannot undo it — it only
-            // reports a failure for an operation that succeeded, inviting a duplicating retry.
-            _logger.LogError(
-                ex,
-                "Failed to persist {Count} audit records for context {ContextId}. Audit trail is incomplete.",
-                records.Count,
-                context.ContextId);
-
-            if (_options.SinkFailureBehavior == SinkFailureBehavior.Throw)
-            {
-                throw;
-            }
+            // Rethrow the sink's own exception with its original stack trace, rather than wrapping
+            // it in a library type callers would have to learn about.
+            ExceptionDispatchInfo.Capture(exception).Throw();
         }
     }
 

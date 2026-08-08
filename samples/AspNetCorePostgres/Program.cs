@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using AuditableOperations.Attributes;
 using AuditableOperations.DependencyInjection;
-using AuditableOperations.EntityFramework;
 using AuditableOperations.Sinks;
 using Microsoft.EntityFrameworkCore;
 
@@ -26,7 +25,7 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
 {
     options
         .UseNpgsql(appConnection)
-        .AddInterceptors(sp.GetRequiredService<AuditSaveChangesInterceptor>());
+        .UseAuditableOperations(sp);
 });
 
 builder.Services.AddOpenApi();

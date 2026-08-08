@@ -14,12 +14,17 @@ public sealed class InMemoryAuditSink : IAuditSink
         IReadOnlyCollection<AuditRecord> records,
         CancellationToken cancellationToken = default)
     {
+        Write(records);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public void Write(IReadOnlyCollection<AuditRecord> records)
+    {
         foreach (var record in records)
         {
             _records.Enqueue(record);
         }
-
-        return Task.CompletedTask;
     }
 
     public void Clear()

@@ -1,10 +1,12 @@
+using AuditableOperations;
+using AuditableOperations.Abstractions;
 using AuditableOperations.DependencyInjection;
-using AuditableOperations.EntityFramework;
 using AuditableOperations.Models;
 using AuditableOperations.Sinks;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Testcontainers.PostgreSql;
 
 namespace AuditableOperations.Tests.Integration;
@@ -96,20 +98,71 @@ public sealed class PostgresAuditSinkTests : IAsyncLifetime
         (await auditDb.AuditEntries.CountAsync()).Should().Be(0);
     }
 
-    private static ServiceProvider BuildProvider(string appCs, string auditCs)
+    /// <summary>
+    /// The request path is caller-controlled and the column is <c>varchar(512)</c>, so an oversized
+    /// value used to fail the insert with the business row already committed.
+    /// </summary>
+    [Fact]
+    public async Task Oversized_context_values_do_not_fail_the_insert_against_real_columns()
+    {
+        var appCs = _postgres.GetConnectionString() + ";Database=app_long_db";
+        var auditCs = _postgres.GetConnectionString() + ";Database=audit_long_db";
+
+        await EnsureDatabaseAsync(appCs);
+        await EnsureDatabaseAsync(auditCs);
+
+        await using var provider = BuildProvider(appCs, auditCs, new AuditContext
+        {
+            UserId = new string('u', 400),
+            TenantId = new string('t', 400),
+            CorrelationId = new string('c', 400),
+            Source = "GET /api/" + new string('x', 2000)
+        });
+
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<IntegrationDbContext>();
+        var auditDb = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+
+        await db.Database.EnsureCreatedAsync();
+        await auditDb.Database.EnsureCreatedAsync();
+
+        db.Orders.Add(new IntegrationOrder { Status = "Pending", InternalNote = "note" });
+
+        var act = async () => await db.SaveChangesAsync();
+        await act.Should().NotThrowAsync();
+
+        var entry = await auditDb.AuditEntries.SingleAsync();
+        entry.Source!.Length.Should().BeLessThanOrEqualTo(AuditFieldLimits.Source);
+        entry.UserId!.Length.Should().BeLessThanOrEqualTo(AuditFieldLimits.UserId);
+        entry.TenantId!.Length.Should().BeLessThanOrEqualTo(AuditFieldLimits.TenantId);
+        entry.CorrelationId!.Length.Should().BeLessThanOrEqualTo(AuditFieldLimits.CorrelationId);
+        entry.Source.Should().EndWith(AuditFieldLimits.TruncationMarker);
+    }
+
+    private static ServiceProvider BuildProvider(
+        string appCs,
+        string auditCs,
+        AuditContext? auditContext = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddAuditableOperations();
         services.AddDatabaseAuditSink(options => options.UseNpgsql(auditCs));
+
+        if (auditContext is not null)
+        {
+            services.RemoveAll<IAuditContextAccessor>();
+            services.AddSingleton<IAuditContextAccessor>(new StaticAuditContextAccessor(auditContext));
+        }
+
         services.AddDbContext<IntegrationDbContext>((sp, options) =>
         {
             options
                 .UseNpgsql(appCs)
-                .AddInterceptors(sp.GetRequiredService<AuditSaveChangesInterceptor>());
+                .UseAuditableOperations(sp);
         });
 
-        return services.BuildServiceProvider();
+        return services.BuildServiceProvider(validateScopes: true);
     }
 
     private static async Task EnsureDatabaseAsync(string connectionString)
@@ -130,6 +183,11 @@ public sealed class PostgresAuditSinkTests : IAsyncLifetime
         {
         }
     }
+}
+
+internal sealed class StaticAuditContextAccessor(AuditContext context) : IAuditContextAccessor
+{
+    public AuditContext GetCurrent() => context;
 }
 
 [AuditableOperations.Attributes.Audited]

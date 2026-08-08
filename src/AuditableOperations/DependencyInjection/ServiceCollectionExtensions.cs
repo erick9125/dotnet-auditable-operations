@@ -31,6 +31,11 @@ public static class ServiceCollectionExtensions
         services.TryAddScoped<AuditSaveChangesInterceptor>();
         services.TryAddScoped<IAuditContextAccessor, NullAuditContextAccessor>();
 
+        // Fallback so a forgotten sink registration warns at runtime instead of failing with an
+        // opaque dependency injection error when the DbContext is first constructed. The
+        // AddXxxAuditSink helpers replace it.
+        services.TryAddSingleton<IAuditSink, NullAuditSink>();
+
         return services;
     }
 

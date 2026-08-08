@@ -156,9 +156,16 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
 {
     options
         .UseNpgsql(builder.Configuration.GetConnectionString("App"))
-        .AddInterceptors(sp.GetRequiredService<AuditSaveChangesInterceptor>());
+        .UseAuditableOperations(sp);
 });
 ```
+
+> Usá la sobrecarga `(sp, options)` de `AddDbContext`. El interceptor es scoped porque lee el contexto
+> de auditoría por request, lo que descarta `AddDbContextPool` — el pooling construye las opciones una
+> sola vez para toda la aplicación y fijaría un único accessor para todos los requests.
+>
+> Si no registrás ningún sink, los registros se descartan y se loguea una advertencia una sola vez.
+> Registrá uno con `AddInMemoryAuditSink()`, `AddDatabaseAuditSink(...)` o tu propio `IAuditSink`.
 
 ### 3. Asegura el esquema de auditoría
 
@@ -412,12 +419,14 @@ services.AddInMemoryAuditSink();
 services.AddDbContext<AppDbContext>((sp, options) =>
 {
     options.UseSqlite(connection)
-           .AddInterceptors(sp.GetRequiredService<AuditSaveChangesInterceptor>());
+           .UseAuditableOperations(sp);
 });
 
-var sp = services.BuildServiceProvider();
-var db = sp.GetRequiredService<AppDbContext>();
-var sink = sp.GetRequiredService<InMemoryAuditSink>();
+// validateScopes replica ASP.NET Core: un DbContext scoped debe resolverse desde un scope.
+await using var provider = services.BuildServiceProvider(validateScopes: true);
+using var scope = provider.CreateScope();
+var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+var sink = provider.GetRequiredService<InMemoryAuditSink>();
 
 db.Orders.Add(new Order { Status = "Pending", InternalNote = "secreto" });
 await db.SaveChangesAsync();

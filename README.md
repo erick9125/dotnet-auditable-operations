@@ -156,9 +156,16 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
 {
     options
         .UseNpgsql(builder.Configuration.GetConnectionString("App"))
-        .AddInterceptors(sp.GetRequiredService<AuditSaveChangesInterceptor>());
+        .UseAuditableOperations(sp);
 });
 ```
+
+> Use the `(sp, options)` overload of `AddDbContext`. The interceptor is scoped because it reads the
+> per-request audit context, which rules out `AddDbContextPool` — pooling builds its options once for
+> the whole application and would pin a single accessor across every request.
+>
+> If no sink is registered, records are discarded and a warning is logged once. Register one with
+> `AddInMemoryAuditSink()`, `AddDatabaseAuditSink(...)` or your own `IAuditSink`.
 
 ### 3. Ensure the audit schema exists
 
@@ -412,12 +419,14 @@ services.AddInMemoryAuditSink();
 services.AddDbContext<AppDbContext>((sp, options) =>
 {
     options.UseSqlite(connection)
-           .AddInterceptors(sp.GetRequiredService<AuditSaveChangesInterceptor>());
+           .UseAuditableOperations(sp);
 });
 
-var sp = services.BuildServiceProvider();
-var db = sp.GetRequiredService<AppDbContext>();
-var sink = sp.GetRequiredService<InMemoryAuditSink>();
+// validateScopes mirrors ASP.NET Core, so a scoped DbContext must be resolved from a scope.
+await using var provider = services.BuildServiceProvider(validateScopes: true);
+using var scope = provider.CreateScope();
+var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+var sink = provider.GetRequiredService<InMemoryAuditSink>();
 
 db.Orders.Add(new Order { Status = "Pending", InternalNote = "secret" });
 await db.SaveChangesAsync();
