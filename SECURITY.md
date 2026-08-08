@@ -40,7 +40,9 @@ The library will not:
 
 ## Redaction behavior
 
-When `RedactSensitiveValues` is enabled (default):
+`[AuditRedact]` is always honored — there is no configuration flag that can disable it. Only the
+placeholder is configurable (`RedactedPlaceholder`). To exclude a sensitive property from the audit
+trail entirely, use `[AuditIgnore]`.
 
 ```json
 {

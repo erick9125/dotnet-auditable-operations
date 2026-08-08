@@ -308,6 +308,44 @@ internal sealed class TestDbContext : DbContext
     public DbSet<WorkOrder> WorkOrders => Set<WorkOrder>();
 
     public DbSet<CacheEntry> CacheEntries => Set<CacheEntry>();
+
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+
+    public DbSet<LongKeyed> LongKeyed => Set<LongKeyed>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Invoice>().OwnsOne(x => x.Address);
+        modelBuilder.Entity<LongKeyed>().HasKey(x => new { x.Left, x.Right });
+    }
+}
+
+[Audited]
+internal sealed class Invoice
+{
+    public Guid Id { get; set; }
+
+    public string Number { get; set; } = string.Empty;
+
+    public BillingAddress Address { get; set; } = new();
+}
+
+internal sealed class BillingAddress
+{
+    public string City { get; set; } = string.Empty;
+
+    [AuditRedact]
+    public string Street { get; set; } = string.Empty;
+}
+
+[Audited]
+internal sealed class LongKeyed
+{
+    public string Left { get; set; } = string.Empty;
+
+    public string Right { get; set; } = string.Empty;
+
+    public string Payload { get; set; } = string.Empty;
 }
 
 [Audited]

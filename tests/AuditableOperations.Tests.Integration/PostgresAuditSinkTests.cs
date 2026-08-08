@@ -100,10 +100,7 @@ public sealed class PostgresAuditSinkTests : IAsyncLifetime
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddAuditableOperations(options =>
-        {
-            options.RedactSensitiveValues = true;
-        });
+        services.AddAuditableOperations();
         services.AddDatabaseAuditSink(options => options.UseNpgsql(auditCs));
         services.AddDbContext<IntegrationDbContext>((sp, options) =>
         {

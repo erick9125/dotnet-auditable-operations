@@ -35,4 +35,23 @@ Sharing one transaction across two databases is not generally available. Same-da
 
 ## Sink failure behavior
 
-If `IAuditSink.WriteAsync` throws after a successful business `SaveChanges`, the exception propagates to the caller. Business data may already be committed while audit persistence failed. Log and monitor `audit.records.failed` once OpenTelemetry support lands in 0.3.0.
+The sink runs *after* the business `SaveChanges` has committed, so a sink failure cannot be rolled
+back. `SinkFailureBehavior` decides what happens next:
+
+| Value | Behavior |
+|-------|----------|
+| `LogAndContinue` (default) | Log at error level and let the business operation succeed. The audit record is lost. |
+| `Throw` | Log and rethrow. The caller sees a failure for an operation whose data is already committed. |
+
+`LogAndContinue` is the default because rethrowing gains nothing: the business data is committed
+either way, and surfacing an error typically triggers a caller retry that duplicates it.
+
+Treat these error logs as alertable — they are the only signal that the trail has a gap. Monitor
+`audit.records.failed` once OpenTelemetry support lands in 0.3.0.
+
+```csharp
+services.AddAuditableOperations(options =>
+{
+    options.SinkFailureBehavior = SinkFailureBehavior.Throw; // fail loudly instead
+});
+```

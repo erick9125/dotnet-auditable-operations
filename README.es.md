@@ -89,6 +89,7 @@ Los IDs generados por base de datos se completan **después** de persistir, para
 |----------------|----------------|
 | Inserts / updates / deletes | Se mapean a `Created`, `Updated`, `Deleted` |
 | Solo propiedades modificadas | Usa `property.IsModified` + comparación old/new |
+| Owned types / value objects | Se integran al registro del dueño como `Address.City` |
 | Contexto de ejecución | Usuario, tenant opcional, correlation ID, source |
 | Redacción | `[AuditRedact]` → `***` **antes** del sink |
 | Exclusión | `[AuditIgnore]` en tipo o propiedad |
@@ -144,7 +145,6 @@ builder.Services.AddAuditableOperations(options =>
     options.EnableEntityChanges = true;
     options.CaptureUser = true;
     options.CaptureTenant = true;
-    options.RedactSensitiveValues = true;
 });
 
 builder.Services.AddHttpAuditContext();
@@ -227,12 +227,14 @@ builder.Services.AddAuditableOperations(options =>
     options.CaptureUser = true;
     options.CaptureTenant = true;
 
-    options.RedactSensitiveValues = true;
     options.RedactedPlaceholder = "***";
 
     options.RequireAuditedAttribute = true;
     options.IgnoreConcurrencyTokens = true;
     options.IgnoreShadowProperties = true;
+
+    options.SinkFailureBehavior = SinkFailureBehavior.LogAndContinue;
+    options.MaxOwnedTypeDepth = 5;
 });
 ```
 
@@ -244,11 +246,16 @@ builder.Services.AddAuditableOperations(options =>
 | `AuditDeletedEntities` | `true` | Auditar deletes |
 | `CaptureUser` | `true` | Resolver usuario desde el accessor |
 | `CaptureTenant` | `true` | Resolver tenant desde el accessor |
-| `RedactSensitiveValues` | `true` | Honrar `[AuditRedact]` |
-| `RedactedPlaceholder` | `"***"` | Valor de reemplazo |
+| `RedactedPlaceholder` | `"***"` | Valor escrito para propiedades `[AuditRedact]` |
 | `RequireAuditedAttribute` | `true` | Solo auditar entidades con `[Audited]` |
 | `IgnoreConcurrencyTokens` | `true` | Ignorar row versions / tokens de concurrencia |
 | `IgnoreShadowProperties` | `true` | Ignorar shadow properties de EF |
+| `SinkFailureBehavior` | `LogAndContinue` | Qué hacer si el sink falla tras el commit de negocio |
+| `MaxOwnedTypeDepth` | `5` | Profundidad máxima al recorrer owned types (value objects) |
+
+> **No** existe una opción para desactivar la redacción. `[AuditRedact]` es una decisión de seguridad
+> por propiedad y ningún flag global debe poder anularla. Para dejar de auditar una propiedad
+> sensible por completo, usa `[AuditIgnore]`.
 
 ---
 
@@ -434,7 +441,7 @@ Las pruebas de integración de este repo usan **Testcontainers + PostgreSQL**. P
 | `SaveChanges` lanza excepción | No |
 | Transacción explícita: `SaveChanges` ok y luego `Rollback` | Posiblemente sí (auditoría huérfana) |
 
-Si el sink falla después de guardar el negocio, la excepción se propaga; pueden existir filas de negocio sin auditoría. Detalle completo: [docs/transactions.md](docs/transactions.md).
+Si el sink falla después de guardar el negocio, `SinkFailureBehavior` decide qué pasa. El default `LogAndContinue` registra el error y deja que la operación de negocio termine bien — propagar no deshace el commit y solo invita a un retry que duplica los datos. Usa `SinkFailureBehavior.Throw` para fallar de forma ruidosa. Detalle completo: [docs/transactions.md](docs/transactions.md).
 
 ---
 

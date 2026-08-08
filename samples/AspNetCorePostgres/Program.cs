@@ -17,7 +17,6 @@ builder.Services.AddAuditableOperations(options =>
     options.EnableEntityChanges = true;
     options.CaptureUser = true;
     options.CaptureTenant = true;
-    options.RedactSensitiveValues = true;
 });
 
 builder.Services.AddHttpAuditContext();

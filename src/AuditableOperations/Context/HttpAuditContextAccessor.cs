@@ -27,12 +27,22 @@ public sealed class HttpAuditContextAccessor : IAuditContextAccessor
             return new AuditContext();
         }
 
+        // Truncated here as well as in the collector: the request path is caller-controlled, and an
+        // oversized value must never be able to fail the audit write.
         return new AuditContext
         {
-            UserId = _options.CaptureUser ? ResolveUserId(httpContext.User) : null,
-            TenantId = _options.CaptureTenant ? ResolveTenantId(httpContext.User) : null,
-            CorrelationId = httpContext.TraceIdentifier,
-            Source = BuildSource(httpContext)
+            UserId = AuditFieldLimits.Truncate(
+                _options.CaptureUser ? ResolveUserId(httpContext.User) : null,
+                AuditFieldLimits.UserId),
+            TenantId = AuditFieldLimits.Truncate(
+                _options.CaptureTenant ? ResolveTenantId(httpContext.User) : null,
+                AuditFieldLimits.TenantId),
+            CorrelationId = AuditFieldLimits.Truncate(
+                httpContext.TraceIdentifier,
+                AuditFieldLimits.CorrelationId),
+            Source = AuditFieldLimits.Truncate(
+                BuildSource(httpContext),
+                AuditFieldLimits.Source)
         };
     }
 

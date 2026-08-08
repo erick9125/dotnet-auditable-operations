@@ -51,17 +51,18 @@ public sealed class AuditDbContext : DbContext
         {
             entity.ToTable("audit_entries");
             entity.HasKey(x => x.Id);
-            entity.Property(x => x.Action).HasMaxLength(32).IsRequired();
-            entity.Property(x => x.EntityType).HasMaxLength(256).IsRequired();
-            entity.Property(x => x.EntityId).HasMaxLength(128).IsRequired();
-            entity.Property(x => x.UserId).HasMaxLength(128);
-            entity.Property(x => x.TenantId).HasMaxLength(128);
-            entity.Property(x => x.CorrelationId).HasMaxLength(128);
-            entity.Property(x => x.Source).HasMaxLength(512);
-            entity.Property(x => x.ChangesJson).HasColumnType("text").IsRequired();
-            entity.HasIndex(x => x.EntityType);
-            entity.HasIndex(x => x.EntityId);
+            entity.Property(x => x.Action).HasMaxLength(AuditFieldLimits.Action).IsRequired();
+            entity.Property(x => x.EntityType).HasMaxLength(AuditFieldLimits.EntityType).IsRequired();
+            entity.Property(x => x.EntityId).HasMaxLength(AuditFieldLimits.EntityId).IsRequired();
+            entity.Property(x => x.UserId).HasMaxLength(AuditFieldLimits.UserId);
+            entity.Property(x => x.TenantId).HasMaxLength(AuditFieldLimits.TenantId);
+            entity.Property(x => x.CorrelationId).HasMaxLength(AuditFieldLimits.CorrelationId);
+            entity.Property(x => x.Source).HasMaxLength(AuditFieldLimits.Source);
+            entity.Property(x => x.ChangesJson).IsRequired();
             entity.HasIndex(x => x.OccurredAt);
+
+            // Serves the natural query: the history of one entity, most recent first.
+            entity.HasIndex(x => new { x.EntityType, x.EntityId, x.OccurredAt });
         });
     }
 }
@@ -90,16 +91,18 @@ public sealed class AuditEntryEntity
 
     public static AuditEntryEntity FromRecord(AuditRecord record)
     {
+        // Defensive: records built outside EntityChangeCollector (custom producers) are clamped here
+        // so an oversized value cannot fail the write after the business data has committed.
         return new AuditEntryEntity
         {
             Id = record.Id,
-            Action = record.Action,
-            EntityType = record.EntityType,
-            EntityId = record.EntityId,
-            UserId = record.UserId,
-            TenantId = record.TenantId,
-            CorrelationId = record.CorrelationId,
-            Source = record.Source,
+            Action = AuditFieldLimits.Truncate(record.Action, AuditFieldLimits.Action)!,
+            EntityType = AuditFieldLimits.Truncate(record.EntityType, AuditFieldLimits.EntityType)!,
+            EntityId = AuditFieldLimits.Truncate(record.EntityId, AuditFieldLimits.EntityId)!,
+            UserId = AuditFieldLimits.Truncate(record.UserId, AuditFieldLimits.UserId),
+            TenantId = AuditFieldLimits.Truncate(record.TenantId, AuditFieldLimits.TenantId),
+            CorrelationId = AuditFieldLimits.Truncate(record.CorrelationId, AuditFieldLimits.CorrelationId),
+            Source = AuditFieldLimits.Truncate(record.Source, AuditFieldLimits.Source),
             ChangesJson = JsonSerializer.Serialize(record.Changes),
             OccurredAt = record.OccurredAt
         };
