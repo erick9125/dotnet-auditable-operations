@@ -20,6 +20,10 @@ Result:
 
 Null values remain null even when redacted, so absence of a value is preserved without leaking content.
 
+`AuditPropertyChange.PreviousValue` and `CurrentValue` are typed as `object`. Sinks that store them
+as JSON return them as `JsonElement`, not the original CLR type — compare them as text rather than
+expecting a round-tripped record to equal the one that was written.
+
 Configure the placeholder:
 
 ```csharp
