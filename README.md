@@ -89,6 +89,7 @@ Database-generated IDs are finalized **after** persistence, so `Created` records
 |---------|----------|
 | Inserts / updates / deletes | Mapped to `Created`, `Updated`, `Deleted` |
 | Modified properties only | Uses `property.IsModified` + old/new comparison |
+| Owned types / value objects | Folded into the owner's record as `Address.City` |
 | Request context | User, optional tenant, correlation ID, source |
 | Redaction | `[AuditRedact]` → `***` **before** the sink |
 | Exclusion | `[AuditIgnore]` on type or property |
@@ -144,7 +145,6 @@ builder.Services.AddAuditableOperations(options =>
     options.EnableEntityChanges = true;
     options.CaptureUser = true;
     options.CaptureTenant = true;
-    options.RedactSensitiveValues = true;
 });
 
 builder.Services.AddHttpAuditContext();
@@ -227,12 +227,14 @@ builder.Services.AddAuditableOperations(options =>
     options.CaptureUser = true;
     options.CaptureTenant = true;
 
-    options.RedactSensitiveValues = true;
     options.RedactedPlaceholder = "***";
 
     options.RequireAuditedAttribute = true;
     options.IgnoreConcurrencyTokens = true;
     options.IgnoreShadowProperties = true;
+
+    options.SinkFailureBehavior = SinkFailureBehavior.LogAndContinue;
+    options.MaxOwnedTypeDepth = 5;
 });
 ```
 
@@ -244,11 +246,16 @@ builder.Services.AddAuditableOperations(options =>
 | `AuditDeletedEntities` | `true` | Capture deletes |
 | `CaptureUser` | `true` | Resolve user from context accessor |
 | `CaptureTenant` | `true` | Resolve tenant from context accessor |
-| `RedactSensitiveValues` | `true` | Honor `[AuditRedact]` |
-| `RedactedPlaceholder` | `"***"` | Replacement value |
+| `RedactedPlaceholder` | `"***"` | Replacement written for `[AuditRedact]` properties |
 | `RequireAuditedAttribute` | `true` | Only audit `[Audited]` entities |
 | `IgnoreConcurrencyTokens` | `true` | Skip row versions / concurrency tokens |
 | `IgnoreShadowProperties` | `true` | Skip EF shadow properties |
+| `SinkFailureBehavior` | `LogAndContinue` | What to do when a sink write fails after the business commit |
+| `MaxOwnedTypeDepth` | `5` | How deep to follow owned-type (value object) graphs |
+
+> There is deliberately **no** option to disable redaction. `[AuditRedact]` is a per-property security
+> decision, and a global flag must not be able to override it. To stop auditing a sensitive property
+> altogether, use `[AuditIgnore]`.
 
 ---
 
@@ -434,7 +441,7 @@ Integration tests in this repo use **Testcontainers + PostgreSQL** — prefer re
 | `SaveChanges` throws | No |
 | Explicit ambient transaction: successful `SaveChanges`, later `Rollback` | Possibly yes (orphan audit) |
 
-If the sink fails after business data was saved, the exception propagates; business rows may exist without audit. Full details: [docs/transactions.md](docs/transactions.md).
+If the sink fails after business data was saved, `SinkFailureBehavior` decides what happens. The default `LogAndContinue` logs at error level and lets the business operation succeed — rethrowing cannot undo the commit and only invites a duplicating retry. Set `SinkFailureBehavior.Throw` to fail loudly instead. Full details: [docs/transactions.md](docs/transactions.md).
 
 ---
 

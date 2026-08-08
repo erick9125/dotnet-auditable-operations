@@ -15,7 +15,13 @@
 - Concurrency tokens are ignored by default.
 - Shadow properties are ignored by default.
 - Navigations are never serialized as graphs.
-- Redaction happens before `IAuditSink.WriteAsync`.
+- Redaction happens before `IAuditSink.WriteAsync`, and cannot be disabled by configuration.
+- Owned types (value objects) are folded into the owning entity's record under a qualified property
+  name such as `Address.Street`, and follow the same redaction and ignore rules. Changing only a value
+  object still produces an `Updated` record for the aggregate.
+- Record fields are truncated to the widths in `AuditFieldLimits` before reaching a sink, so a
+  caller-controlled value such as a long request path cannot fail the audit write after the business
+  transaction has already committed.
 
 ## Example
 

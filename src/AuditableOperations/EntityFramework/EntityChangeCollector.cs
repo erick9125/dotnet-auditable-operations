@@ -6,25 +6,21 @@ using Microsoft.Extensions.Options;
 
 namespace AuditableOperations.EntityFramework;
 
-internal sealed class PendingAuditCapture
-{
-    public required EntityEntry Entry { get; init; }
-
-    public required AuditAction Action { get; init; }
-
-    public required string EntityType { get; init; }
-
-    public required List<AuditPropertyChange> Changes { get; init; }
-
-    public string? TemporaryEntityId { get; init; }
-}
-
+/// <summary>
+/// Turns EF Core change-tracker state into <see cref="AuditRecord"/> instances.
+/// </summary>
 public sealed class EntityChangeCollector
 {
+    private const string OwnedPathSeparator = ".";
+
     private readonly EntityMetadataResolver _metadataResolver;
     private readonly AuditRedactor _redactor;
     private readonly AuditableOperationsOptions _options;
 
+    /// <summary>Initializes a new instance of the <see cref="EntityChangeCollector"/> class.</summary>
+    /// <param name="metadataResolver">Decides what is auditable.</param>
+    /// <param name="redactor">Builds change entries and applies redaction.</param>
+    /// <param name="options">Audit configuration.</param>
     public EntityChangeCollector(
         EntityMetadataResolver metadataResolver,
         AuditRedactor redactor,
@@ -35,6 +31,10 @@ public sealed class EntityChangeCollector
         _options = options.Value;
     }
 
+    /// <summary>
+    /// Snapshots auditable changes before they are persisted. Owned types are folded into the record
+    /// of the entity that owns them rather than audited as entities of their own.
+    /// </summary>
     internal IReadOnlyList<PendingAuditCapture> Capture(DbContext? context)
     {
         if (context is null || !_options.EnableEntityChanges)
@@ -46,33 +46,32 @@ public sealed class EntityChangeCollector
 
         foreach (var entry in context.ChangeTracker.Entries())
         {
+            // Owned entries are reached through their owner, so that editing only a value object
+            // still attributes the change to the aggregate the consumer opted in.
+            if (entry.Metadata.IsOwned())
+            {
+                continue;
+            }
+
             if (!_metadataResolver.ShouldAuditEntity(entry))
             {
                 continue;
             }
 
-            switch (entry.State)
+            var capture = CaptureEntry(entry);
+            if (capture is not null)
             {
-                case EntityState.Added when _options.AuditAddedEntities:
-                    captures.Add(CaptureCreated(entry));
-                    break;
-                case EntityState.Modified when _options.AuditModifiedEntities:
-                    var modified = CaptureModified(entry);
-                    if (modified is not null)
-                    {
-                        captures.Add(modified);
-                    }
-                    break;
-                case EntityState.Deleted when _options.AuditDeletedEntities:
-                    captures.Add(CaptureDeleted(entry));
-                    break;
+                captures.Add(capture);
             }
         }
 
         return captures;
     }
 
-    internal IReadOnlyList<AuditRecord> Finalize(
+    /// <summary>
+    /// Completes captured changes once <c>SaveChanges</c> has assigned database-generated keys.
+    /// </summary>
+    internal IReadOnlyList<AuditRecord> BuildRecords(
         IReadOnlyList<PendingAuditCapture> captures,
         AuditContext auditContext,
         DateTimeOffset occurredAt)
@@ -81,18 +80,16 @@ public sealed class EntityChangeCollector
 
         foreach (var capture in captures)
         {
-            var entityId = ResolveEntityId(capture.Entry) ?? capture.TemporaryEntityId ?? string.Empty;
-
             records.Add(new AuditRecord
             {
                 Id = Guid.CreateVersion7(),
                 Action = capture.Action.ToString(),
-                EntityType = capture.EntityType,
-                EntityId = entityId,
-                UserId = auditContext.UserId,
-                TenantId = auditContext.TenantId,
-                CorrelationId = auditContext.CorrelationId,
-                Source = auditContext.Source,
+                EntityType = Limit(capture.EntityType, AuditFieldLimits.EntityType),
+                EntityId = Limit(ResolveEntityId(capture.Entry) ?? string.Empty, AuditFieldLimits.EntityId),
+                UserId = AuditFieldLimits.Truncate(auditContext.UserId, AuditFieldLimits.UserId),
+                TenantId = AuditFieldLimits.Truncate(auditContext.TenantId, AuditFieldLimits.TenantId),
+                CorrelationId = AuditFieldLimits.Truncate(auditContext.CorrelationId, AuditFieldLimits.CorrelationId),
+                Source = AuditFieldLimits.Truncate(auditContext.Source, AuditFieldLimits.Source),
                 Changes = capture.Changes,
                 OccurredAt = occurredAt
             });
@@ -101,68 +98,19 @@ public sealed class EntityChangeCollector
         return records;
     }
 
-    private PendingAuditCapture CaptureCreated(EntityEntry entry)
+    private PendingAuditCapture? CaptureEntry(EntityEntry entry)
     {
-        var changes = new List<AuditPropertyChange>();
-
-        foreach (var property in entry.Properties)
+        var action = ResolveAction(entry);
+        if (action is null)
         {
-            if (!_metadataResolver.ShouldAuditProperty(property))
-            {
-                continue;
-            }
-
-            if (property.Metadata.IsPrimaryKey())
-            {
-                continue;
-            }
-
-            changes.Add(_redactor.CreateChange(
-                _metadataResolver.GetClrProperty(property.Metadata),
-                property.Metadata.Name,
-                previousValue: null,
-                currentValue: property.CurrentValue));
+            return null;
         }
 
-        return new PendingAuditCapture
-        {
-            Entry = entry,
-            Action = AuditAction.Created,
-            EntityType = entry.Metadata.ClrType.Name,
-            Changes = changes,
-            TemporaryEntityId = ResolveEntityId(entry)
-        };
-    }
-
-    private PendingAuditCapture? CaptureModified(EntityEntry entry)
-    {
         var changes = new List<AuditPropertyChange>();
+        CollectChanges(entry, prefix: null, changes, depth: 0);
 
-        foreach (var property in entry.Properties)
-        {
-            if (!property.IsModified)
-            {
-                continue;
-            }
-
-            if (!_metadataResolver.ShouldAuditProperty(property))
-            {
-                continue;
-            }
-
-            if (Equals(property.OriginalValue, property.CurrentValue))
-            {
-                continue;
-            }
-
-            changes.Add(_redactor.CreateChange(
-                _metadataResolver.GetClrProperty(property.Metadata),
-                property.Metadata.Name,
-                property.OriginalValue,
-                property.CurrentValue));
-        }
-
-        if (changes.Count == 0)
+        // A create or delete is worth recording on its own; an update is not.
+        if (action == AuditAction.Updated && changes.Count == 0)
         {
             return null;
         }
@@ -170,39 +118,128 @@ public sealed class EntityChangeCollector
         return new PendingAuditCapture
         {
             Entry = entry,
-            Action = AuditAction.Updated,
+            Action = action.Value,
             EntityType = entry.Metadata.ClrType.Name,
-            Changes = changes,
-            TemporaryEntityId = ResolveEntityId(entry)
+            Changes = changes
         };
     }
 
-    private PendingAuditCapture CaptureDeleted(EntityEntry entry)
+    private AuditAction? ResolveAction(EntityEntry entry)
     {
-        var changes = new List<AuditPropertyChange>();
+        return entry.State switch
+        {
+            EntityState.Added when _options.AuditAddedEntities => AuditAction.Created,
+            EntityState.Modified when _options.AuditModifiedEntities => AuditAction.Updated,
+            EntityState.Deleted when _options.AuditDeletedEntities => AuditAction.Deleted,
+
+            // EF Core does not mark the owner as modified when only a value object changed, so an
+            // unchanged root is still a candidate — it is dropped later if nothing was captured.
+            EntityState.Unchanged when _options.AuditModifiedEntities
+                && _metadataResolver.HasOwnedNavigations(entry.Metadata) => AuditAction.Updated,
+
+            _ => null
+        };
+    }
+
+    private void CollectChanges(
+        EntityEntry entry,
+        string? prefix,
+        List<AuditPropertyChange> changes,
+        int depth)
+    {
+        AppendScalarChanges(entry, prefix, changes);
+
+        if (depth >= _options.MaxOwnedTypeDepth
+            || !_metadataResolver.HasOwnedNavigations(entry.Metadata))
+        {
+            return;
+        }
+
+        foreach (var navigation in entry.Navigations)
+        {
+            if (!navigation.Metadata.TargetEntityType.IsOwned()
+                || !_metadataResolver.ShouldAuditOwnedNavigation(navigation.Metadata))
+            {
+                continue;
+            }
+
+            switch (navigation)
+            {
+                case ReferenceEntry reference when reference.TargetEntry is { } target:
+                    CollectChanges(target, Qualify(prefix, navigation.Metadata.Name), changes, depth + 1);
+                    break;
+
+                case CollectionEntry collection when collection.CurrentValue is not null:
+                    var index = 0;
+                    foreach (var item in collection.CurrentValue)
+                    {
+                        var target = collection.FindEntry(item);
+                        if (target is not null)
+                        {
+                            CollectChanges(
+                                target,
+                                Qualify(prefix, $"{navigation.Metadata.Name}[{index}]"),
+                                changes,
+                                depth + 1);
+                        }
+
+                        index++;
+                    }
+
+                    break;
+            }
+        }
+    }
+
+    private void AppendScalarChanges(EntityEntry entry, string? prefix, List<AuditPropertyChange> changes)
+    {
+        var capturesDelta = entry.State == EntityState.Modified;
+
+        if (!capturesDelta
+            && entry.State is not (EntityState.Added or EntityState.Deleted))
+        {
+            return;
+        }
+
+        var readsPrevious = entry.State != EntityState.Added;
+        var readsCurrent = entry.State != EntityState.Deleted;
 
         foreach (var property in entry.Properties)
         {
+            if (capturesDelta && !property.IsModified)
+            {
+                continue;
+            }
+
             if (!_metadataResolver.ShouldAuditProperty(property))
             {
                 continue;
             }
 
-            changes.Add(_redactor.CreateChange(
-                _metadataResolver.GetClrProperty(property.Metadata),
-                property.Metadata.Name,
-                previousValue: property.OriginalValue,
-                currentValue: null));
-        }
+            var previousValue = readsPrevious ? property.OriginalValue : null;
+            var currentValue = readsCurrent ? property.CurrentValue : null;
 
-        return new PendingAuditCapture
-        {
-            Entry = entry,
-            Action = AuditAction.Deleted,
-            EntityType = entry.Metadata.ClrType.Name,
-            Changes = changes,
-            TemporaryEntityId = ResolveEntityId(entry)
-        };
+            if (capturesDelta && Equals(previousValue, currentValue))
+            {
+                continue;
+            }
+
+            changes.Add(_redactor.CreateChange(
+                Qualify(prefix, property.Metadata.Name),
+                _metadataResolver.ShouldRedactProperty(property),
+                previousValue,
+                currentValue));
+        }
+    }
+
+    private static string Qualify(string? prefix, string name)
+    {
+        return prefix is null ? name : string.Concat(prefix, OwnedPathSeparator, name);
+    }
+
+    private static string Limit(string value, int maxLength)
+    {
+        return AuditFieldLimits.Truncate(value, maxLength)!;
     }
 
     private static string? ResolveEntityId(EntityEntry entry)
@@ -215,19 +252,15 @@ public sealed class EntityChangeCollector
 
         if (key.Properties.Count == 1)
         {
-            var value = entry.Property(key.Properties[0].Name).CurrentValue
-                ?? entry.Property(key.Properties[0].Name).OriginalValue;
-            return value?.ToString();
+            return ReadKeyValue(entry, key.Properties[0].Name);
         }
 
-        var parts = key.Properties
-            .Select(property =>
-            {
-                var value = entry.Property(property.Name).CurrentValue
-                    ?? entry.Property(property.Name).OriginalValue;
-                return value?.ToString() ?? string.Empty;
-            });
+        return string.Join("|", key.Properties.Select(property => ReadKeyValue(entry, property.Name) ?? string.Empty));
+    }
 
-        return string.Join("|", parts);
+    private static string? ReadKeyValue(EntityEntry entry, string propertyName)
+    {
+        var property = entry.Property(propertyName);
+        return (property.CurrentValue ?? property.OriginalValue)?.ToString();
     }
 }

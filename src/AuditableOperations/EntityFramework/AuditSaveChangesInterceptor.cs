@@ -3,27 +3,46 @@ using AuditableOperations.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace AuditableOperations.EntityFramework;
 
+/// <summary>
+/// Captures auditable changes before <c>SaveChanges</c> and writes them to the configured
+/// <see cref="IAuditSink"/> once the business data has been persisted.
+/// </summary>
+/// <remarks>
+/// Register this interceptor with the same lifetime as the audit context accessor it depends on
+/// (scoped by default). A singleton registration would capture a single
+/// <see cref="IAuditContextAccessor"/> for the process and attribute records to the wrong user.
+/// </remarks>
 public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
 {
     private readonly EntityChangeCollector _collector;
     private readonly IAuditContextAccessor _contextAccessor;
     private readonly IAuditSink _sink;
     private readonly ILogger<AuditSaveChangesInterceptor> _logger;
+    private readonly AuditableOperationsOptions _options;
     private readonly ConcurrentDictionary<DbContextId, IReadOnlyList<PendingAuditCapture>> _pending = new();
 
+    /// <summary>Initializes a new instance of the <see cref="AuditSaveChangesInterceptor"/> class.</summary>
+    /// <param name="collector">Captures and finalizes entity changes.</param>
+    /// <param name="contextAccessor">Supplies user, tenant, correlation and source.</param>
+    /// <param name="sink">Destination for the produced records.</param>
+    /// <param name="logger">Logger used to report sink failures.</param>
+    /// <param name="options">Audit configuration.</param>
     public AuditSaveChangesInterceptor(
         EntityChangeCollector collector,
         IAuditContextAccessor contextAccessor,
         IAuditSink sink,
-        ILogger<AuditSaveChangesInterceptor> logger)
+        ILogger<AuditSaveChangesInterceptor> logger,
+        IOptions<AuditableOperationsOptions> options)
     {
         _collector = collector;
         _contextAccessor = contextAccessor;
         _sink = sink;
         _logger = logger;
+        _options = options.Value;
     }
 
     public override InterceptionResult<int> SavingChanges(
@@ -105,20 +124,26 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         }
 
         var auditContext = _contextAccessor.GetCurrent();
-        var records = _collector.Finalize(captures, auditContext, DateTimeOffset.UtcNow);
+        var records = _collector.BuildRecords(captures, auditContext, DateTimeOffset.UtcNow);
 
         try
         {
-            await _sink.WriteAsync(records, cancellationToken);
+            await _sink.WriteAsync(records, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
+            // The business transaction already committed, so rethrowing cannot undo it — it only
+            // reports a failure for an operation that succeeded, inviting a duplicating retry.
             _logger.LogError(
                 ex,
-                "Failed to persist {Count} audit records for context {ContextId}",
+                "Failed to persist {Count} audit records for context {ContextId}. Audit trail is incomplete.",
                 records.Count,
                 context.ContextId);
-            throw;
+
+            if (_options.SinkFailureBehavior == SinkFailureBehavior.Throw)
+            {
+                throw;
+            }
         }
     }
 
