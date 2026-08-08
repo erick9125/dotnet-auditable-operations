@@ -6,11 +6,18 @@ using Microsoft.Extensions.Options;
 
 namespace AuditableOperations.Context;
 
+/// <summary>
+/// Builds the audit context from the current HTTP request: user and tenant from claims, correlation
+/// from <see cref="HttpContext.TraceIdentifier"/>, and source from the method and path.
+/// </summary>
 public sealed class HttpAuditContextAccessor : IAuditContextAccessor
 {
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly AuditableOperationsOptions _options;
 
+    /// <summary>Initializes a new instance of the <see cref="HttpAuditContextAccessor"/> class.</summary>
+    /// <param name="httpContextAccessor">Accessor for the ambient request.</param>
+    /// <param name="options">Audit configuration.</param>
     public HttpAuditContextAccessor(
         IHttpContextAccessor httpContextAccessor,
         IOptions<AuditableOperationsOptions> options)
@@ -19,6 +26,8 @@ public sealed class HttpAuditContextAccessor : IAuditContextAccessor
         _options = options.Value;
     }
 
+    /// <inheritdoc />
+    /// <remarks>Returns an empty context outside a request, such as on startup or in a worker.</remarks>
     public AuditContext GetCurrent()
     {
         var httpContext = _httpContextAccessor.HttpContext;

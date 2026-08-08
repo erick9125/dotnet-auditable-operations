@@ -6,11 +6,26 @@ using AuditableOperations.Sinks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace AuditableOperations.DependencyInjection;
 
+/// <summary>
+/// Registration helpers for the audit pipeline.
+/// </summary>
 public static class ServiceCollectionExtensions
 {
+    /// <summary>
+    /// Registers change capture, redaction and the audit interceptor.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configure">Optional configuration callback.</param>
+    /// <returns>The same <paramref name="services"/>, for chaining.</returns>
+    /// <remarks>
+    /// Call this first, then a sink helper. Without a sink, <see cref="NullAuditSink"/> discards
+    /// records and warns once. Attach the interceptor to your context with
+    /// <see cref="DbContextOptionsBuilderExtensions.UseAuditableOperations"/>.
+    /// </remarks>
     public static IServiceCollection AddAuditableOperations(
         this IServiceCollection services,
         Action<AuditableOperationsOptions>? configure = null)
@@ -19,10 +34,9 @@ public static class ServiceCollectionExtensions
         {
             services.Configure(configure);
         }
-        else
-        {
-            services.Configure<AuditableOperationsOptions>(_ => { });
-        }
+
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IValidateOptions<AuditableOperationsOptions>, AuditableOperationsOptionsValidator>());
 
         services.TryAddSingleton<IAuditValueFormatter, DefaultValueFormatter>();
         services.TryAddSingleton<EntityMetadataResolver>();
@@ -39,6 +53,12 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Resolves the audit context from the current HTTP request, replacing any accessor already
+    /// registered.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <returns>The same <paramref name="services"/>, for chaining.</returns>
     public static IServiceCollection AddHttpAuditContext(
         this IServiceCollection services)
     {
@@ -48,6 +68,12 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Uses <see cref="InMemoryAuditSink"/>, replacing any sink already registered. For tests and
+    /// local inspection only — it retains every record.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <returns>The same <paramref name="services"/>, for chaining.</returns>
     public static IServiceCollection AddInMemoryAuditSink(
         this IServiceCollection services)
     {
@@ -57,6 +83,13 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Uses <see cref="DatabaseAuditSink"/> backed by a dedicated <see cref="AuditDbContext"/>,
+    /// replacing any sink already registered.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configureDbContext">Configures the audit store's provider and connection.</param>
+    /// <returns>The same <paramref name="services"/>, for chaining.</returns>
     public static IServiceCollection AddDatabaseAuditSink(
         this IServiceCollection services,
         Action<IServiceProvider, DbContextOptionsBuilder> configureDbContext)
@@ -67,6 +100,9 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <inheritdoc cref="AddDatabaseAuditSink(IServiceCollection, Action{IServiceProvider, DbContextOptionsBuilder})" />
+    /// <param name="services">The service collection.</param>
+    /// <param name="configureDbContext">Configures the audit store's provider and connection.</param>
     public static IServiceCollection AddDatabaseAuditSink(
         this IServiceCollection services,
         Action<DbContextOptionsBuilder> configureDbContext)

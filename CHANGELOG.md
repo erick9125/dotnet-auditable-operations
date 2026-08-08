@@ -27,4 +27,9 @@
 - Support `[Audited]`, `[AuditRedact]`, and `[AuditIgnore]`
 - Persist through `InMemoryAuditSink` and `DatabaseAuditSink`
 - Document transaction and security guarantees
+- Document the whole public API with XML comments, shipped in the package
+- Validate options at startup (`RedactedPlaceholder`, `MaxOwnedTypeDepth`, `SinkFailureBehavior`)
+- Cap binary values and collection nesting in `DefaultValueFormatter`, so a blob column cannot flood
+  the trail on every change
+- Store `ChangesJson` as camelCase, matching the documented payload shape
 - Add unit tests and PostgreSQL Testcontainers integration tests

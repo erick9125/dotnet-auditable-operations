@@ -22,6 +22,9 @@
 - Record fields are truncated to the widths in `AuditFieldLimits` before reaching a sink, so a
   caller-controlled value such as a long request path cannot fail the audit write after the business
   transaction has already committed.
+- Binary values are base64-encoded up to `DefaultValueFormatter.MaxBinaryLength` and then truncated,
+  and collection nesting stops at `MaxCollectionDepth`. A blob column therefore cannot copy its whole
+  contents into the audit store on every change.
 
 ## Example
 

@@ -222,7 +222,7 @@ public sealed class EntityChangeCollector
             var previousValue = readsPrevious ? property.OriginalValue : null;
             var currentValue = readsCurrent ? property.CurrentValue : null;
 
-            if (capturesDelta && Equals(previousValue, currentValue))
+            if (capturesDelta && AreEquivalent(property, previousValue, currentValue))
             {
                 continue;
             }
@@ -233,6 +233,29 @@ public sealed class EntityChangeCollector
                 previousValue,
                 currentValue));
         }
+    }
+
+    /// <summary>
+    /// Compares two values with the property's own EF Core comparer rather than
+    /// <see cref="object.Equals(object, object)"/>.
+    /// </summary>
+    /// <remarks>
+    /// EF already filters most redundant edits through <c>IsModified</c>, so this rarely changes the
+    /// outcome. It matters for properties carrying a value converter or custom comparer, where the
+    /// CLR notion of equality and the model's notion disagree — using the model's keeps this check
+    /// consistent with the <c>IsModified</c> flag it complements.
+    /// </remarks>
+    private static bool AreEquivalent(PropertyEntry property, object? previous, object? current)
+    {
+        if (previous is null || current is null)
+        {
+            return previous is null && current is null;
+        }
+
+        var comparer = property.Metadata.GetValueComparer();
+        return comparer is not null
+            ? comparer.Equals(previous, current)
+            : Equals(previous, current);
     }
 
     private static string Qualify(string? prefix, string name)

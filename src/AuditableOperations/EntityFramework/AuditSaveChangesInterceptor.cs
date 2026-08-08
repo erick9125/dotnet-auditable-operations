@@ -47,6 +47,8 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         _options = options.Value;
     }
 
+    /// <summary>Snapshots auditable changes before they are written.</summary>
+    /// <inheritdoc />
     public override InterceptionResult<int> SavingChanges(
         DbContextEventData eventData,
         InterceptionResult<int> result)
@@ -55,6 +57,8 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         return result;
     }
 
+    /// <summary>Snapshots auditable changes before they are written.</summary>
+    /// <inheritdoc />
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
         DbContextEventData eventData,
         InterceptionResult<int> result,
@@ -64,6 +68,8 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         return ValueTask.FromResult(result);
     }
 
+    /// <summary>Resolves generated keys and writes the records through the synchronous sink path.</summary>
+    /// <inheritdoc />
     public override int SavedChanges(
         SaveChangesCompletedEventData eventData,
         int result)
@@ -84,6 +90,8 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         return result;
     }
 
+    /// <summary>Resolves generated keys and writes the records through the asynchronous sink path.</summary>
+    /// <inheritdoc />
     public override async ValueTask<int> SavedChangesAsync(
         SaveChangesCompletedEventData eventData,
         int result,
@@ -105,11 +113,15 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         return result;
     }
 
+    /// <summary>Discards the snapshot so a failed save leaves no orphan audit records.</summary>
+    /// <inheritdoc />
     public override void SaveChangesFailed(DbContextErrorEventData eventData)
     {
         DiscardPending(eventData.Context);
     }
 
+    /// <summary>Discards the snapshot so a failed save leaves no orphan audit records.</summary>
+    /// <inheritdoc />
     public override Task SaveChangesFailedAsync(
         DbContextErrorEventData eventData,
         CancellationToken cancellationToken = default)
