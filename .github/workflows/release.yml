@@ -19,15 +19,16 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: nuget
 
     steps:
       - uses: actions/checkout@v4
         with:
-          # Source Link needs the full history to resolve the commit for embedded source URLs.
           fetch-depth: 0
 
       - name: Setup .NET
@@ -94,18 +95,14 @@ jobs:
           echo "Inspecting $nupkg"
           unzip -o -q "$nupkg" -d artifacts/inspect
 
-          # The library must not require the ASP.NET Core shared framework: a worker or console
-          # host has to be able to consume it.
           if grep -q 'frameworkReference' artifacts/inspect/*.nuspec; then
             echo "::error::The package declares a frameworkReference; consumers would be forced to be ASP.NET Core apps."
             exit 1
           fi
 
-          # XML documentation drives IntelliSense for consumers.
           test -f artifacts/inspect/lib/net9.0/AuditableOperations.xml \
             || { echo "::error::XML documentation is missing from the package."; exit 1; }
 
-          # Symbols are published alongside the package.
           ls artifacts/*.snupkg >/dev/null \
             || { echo "::error::No symbol package (.snupkg) was produced."; exit 1; }
 
@@ -119,19 +116,18 @@ jobs:
             artifacts/*.nupkg
             artifacts/*.snupkg
 
+      - name: NuGet login (OIDC)
+        if: steps.meta.outputs.publish == 'true'
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: erickmorales91
+
       - name: Publish to NuGet
         if: steps.meta.outputs.publish == 'true'
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
-          if [ -z "${NUGET_API_KEY}" ]; then
-            echo "::error::The NUGET_API_KEY secret is not configured."
-            exit 1
-          fi
-
-          # The matching .snupkg next to each .nupkg is pushed automatically.
           dotnet nuget push 'artifacts/*.nupkg' \
-            --api-key "${NUGET_API_KEY}" \
+            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 
