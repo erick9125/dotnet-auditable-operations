@@ -2,6 +2,11 @@
 
 ## 0.1.0
 
+- Publish reproducible packages: deterministic CI builds, Source Link, and a `.snupkg` symbol package
+- Add a tag-driven release workflow that validates the changelog, verifies package contents, and
+  publishes to NuGet
+- Collect code coverage in CI and pin the SDK through `global.json`
+
 - Capture EF Core Added, Modified, and Deleted entities via `AuditSaveChangesInterceptor`
 - Capture owned types (value objects) on the owning entity's record under qualified names such as
   `Address.City`; changing only a value object still produces an `Updated` record

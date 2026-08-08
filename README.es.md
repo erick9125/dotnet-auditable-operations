@@ -518,6 +518,8 @@ Primero el núcleo, bien hecho.
 | [docs/transactions.md](docs/transactions.md) | Garantías transaccionales |
 | [docs/redaction.md](docs/redaction.md) | Comportamiento de redacción |
 | [docs/custom-sinks.md](docs/custom-sinks.md) | Implementar `IAuditSink` |
+| [docs/audit-store-schema.md](docs/audit-store-schema.md) | Tabla de auditoría, migraciones, retención |
+| [docs/releasing.md](docs/releasing.md) | Cortar y publicar una release |
 | [CHANGELOG.md](CHANGELOG.md) | Notas de versión |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Flujo de desarrollo |
 

@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
@@ -10,5 +10,24 @@
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/erick9125/dotnet-auditable-operations</RepositoryUrl>
     <PackageProjectUrl>https://github.com/erick9125/dotnet-auditable-operations</PackageProjectUrl>
+  </PropertyGroup>
+
+  <!--
+    Reproducible packages. Source Link ships with the .NET 8+ SDK, so consumers can step into the
+    library from a debugger without any extra package reference.
+  -->
+  <PropertyGroup>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <!--
+    Normalizes paths embedded in the assembly to repository-relative ones. Only on CI, because it
+    breaks stepping into local builds from an IDE.
+  -->
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
   </PropertyGroup>
 </Project>

@@ -14,8 +14,8 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: |
-            9.0.x
+          # Pinned through global.json so CI and local builds use the same SDK feature band.
+          global-json-file: global.json
 
       - name: Restore
         run: dotnet restore
@@ -24,10 +24,34 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Unit tests
-        run: dotnet test tests/AuditableOperations.Tests.Unit/AuditableOperations.Tests.Unit.csproj --no-build --configuration Release --verbosity normal
+        run: >
+          dotnet test tests/AuditableOperations.Tests.Unit/AuditableOperations.Tests.Unit.csproj
+          --no-build --configuration Release --verbosity normal
+          --collect:"XPlat Code Coverage" --results-directory TestResults/unit
 
       - name: Integration tests
-        run: dotnet test tests/AuditableOperations.Tests.Integration/AuditableOperations.Tests.Integration.csproj --no-build --configuration Release --verbosity normal
+        run: >
+          dotnet test tests/AuditableOperations.Tests.Integration/AuditableOperations.Tests.Integration.csproj
+          --no-build --configuration Release --verbosity normal
+          --collect:"XPlat Code Coverage" --results-directory TestResults/integration
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: TestResults/**/coverage.cobertura.xml
+          if-no-files-found: warn
 
       - name: Pack
-        run: dotnet pack src/AuditableOperations/AuditableOperations.csproj --no-build --configuration Release --output artifacts
+        run: >
+          dotnet pack src/AuditableOperations/AuditableOperations.csproj
+          --no-build --configuration Release --output artifacts
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-preview
+          path: |
+            artifacts/*.nupkg
+            artifacts/*.snupkg
