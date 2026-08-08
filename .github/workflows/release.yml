@@ -1,0 +1,146 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v (e.g. 0.1.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build and validate without publishing'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Source Link needs the full history to resolve the commit for embedded source URLs.
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Resolve version
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version='${{ inputs.version }}'
+            publish='${{ inputs.dry_run }}'
+            [ "$publish" = "true" ] && publish=false || publish=true
+          else
+            version="${GITHUB_REF_NAME#v}"
+            publish=true
+          fi
+
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$version' is not a valid semantic version."
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Releasing $version (publish=$publish)"
+
+      - name: Require a changelog entry
+        run: |
+          version='${{ steps.meta.outputs.version }}'
+          if ! grep -Eq "^##+[[:space:]]+\[?v?${version}\]?" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for $version. Add one before tagging."
+            exit 1
+          fi
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release -p:Version=${{ steps.meta.outputs.version }}
+
+      - name: Unit tests
+        run: >
+          dotnet test tests/AuditableOperations.Tests.Unit/AuditableOperations.Tests.Unit.csproj
+          --no-build --configuration Release
+
+      - name: Integration tests
+        run: >
+          dotnet test tests/AuditableOperations.Tests.Integration/AuditableOperations.Tests.Integration.csproj
+          --no-build --configuration Release
+
+      - name: Pack
+        run: >
+          dotnet pack src/AuditableOperations/AuditableOperations.csproj
+          --no-build --configuration Release
+          -p:Version=${{ steps.meta.outputs.version }}
+          --output artifacts
+
+      - name: Verify package contents
+        run: |
+          set -euo pipefail
+          nupkg=$(ls artifacts/*.nupkg)
+          echo "Inspecting $nupkg"
+          unzip -o -q "$nupkg" -d artifacts/inspect
+
+          # The library must not require the ASP.NET Core shared framework: a worker or console
+          # host has to be able to consume it.
+          if grep -q 'frameworkReference' artifacts/inspect/*.nuspec; then
+            echo "::error::The package declares a frameworkReference; consumers would be forced to be ASP.NET Core apps."
+            exit 1
+          fi
+
+          # XML documentation drives IntelliSense for consumers.
+          test -f artifacts/inspect/lib/net9.0/AuditableOperations.xml \
+            || { echo "::error::XML documentation is missing from the package."; exit 1; }
+
+          # Symbols are published alongside the package.
+          ls artifacts/*.snupkg >/dev/null \
+            || { echo "::error::No symbol package (.snupkg) was produced."; exit 1; }
+
+          echo "Package contents verified."
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: |
+            artifacts/*.nupkg
+            artifacts/*.snupkg
+
+      - name: Publish to NuGet
+        if: steps.meta.outputs.publish == 'true'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "${NUGET_API_KEY}" ]; then
+            echo "::error::The NUGET_API_KEY secret is not configured."
+            exit 1
+          fi
+
+          # The matching .snupkg next to each .nupkg is pushed automatically.
+          dotnet nuget push 'artifacts/*.nupkg' \
+            --api-key "${NUGET_API_KEY}" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      - name: Create GitHub release
+        if: steps.meta.outputs.publish == 'true' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${GITHUB_REF_NAME}"
+          artifacts/*.nupkg artifacts/*.snupkg
+          --title "${GITHUB_REF_NAME}"
+          --generate-notes

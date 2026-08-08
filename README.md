@@ -518,6 +518,8 @@ Build the core well first.
 | [docs/transactions.md](docs/transactions.md) | Transaction guarantees |
 | [docs/redaction.md](docs/redaction.md) | Redaction behavior |
 | [docs/custom-sinks.md](docs/custom-sinks.md) | Implementing `IAuditSink` |
+| [docs/audit-store-schema.md](docs/audit-store-schema.md) | Audit table, migrations, retention |
+| [docs/releasing.md](docs/releasing.md) | Cutting and publishing a release |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow |
 
